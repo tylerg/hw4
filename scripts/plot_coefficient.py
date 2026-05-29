@@ -26,9 +26,33 @@ def main():
     parser.add_argument("--out",        type=str,   default="coefficient_plot.png")
     args = parser.parse_args()
 
-    # TODO (1.8) — compute betas, alphas, alpha_bars, sigma^2, and the coefficient,
-    # then plot with a log-scale y-axis and save to args.out.
-    raise NotImplementedError
+    # Compute schedule
+    betas = linear_schedule(args.T, args.beta_start, args.beta_end)
+    
+    # Compute alpha and alpha_bar
+    alphas = 1.0 - betas
+    alpha_bars = np.cumprod(alphas)
+    
+    # Compute sigma^2 = 1 - alpha_bar
+    sigma_sq = 1.0 - alpha_bars
+    
+    # Compute the loss coefficient: β_t^2 / (2 σ_t^2 α_t (1 - ᾱ_t))
+    # = β_t^2 / (2 σ_t^2 α_t σ_t^2)
+    # = β_t^2 / (2 α_t (1 - ᾱ_t)^2)
+    alpha_t = alphas
+    coefficient = betas**2 / (2.0 * alpha_t * sigma_sq**2 + 1e-8)
+    
+    # Plot on log scale
+    plt.figure(figsize=(10, 6))
+    plt.semilogy(range(1, args.T + 1), coefficient, linewidth=2)
+    plt.xlabel("Time step t")
+    plt.ylabel("Loss coefficient (log scale)")
+    plt.title("DDPM Loss Coefficient vs. Time")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(args.out, dpi=100, bbox_inches="tight")
+    plt.close()
+    print(f"Saved: {args.out}")
 
 
 if __name__ == "__main__":

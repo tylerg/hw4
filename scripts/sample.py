@@ -89,11 +89,21 @@ def get_args():
 
 
 def load_vp_model(checkpoint: str, device) -> tuple[VPSDE, UNet]:
-    raise NotImplementedError("Fill in VPSDE and UNet loading.")
+    """Load a trained VP-SDE score model from a checkpoint."""
+    model = UNet(in_channels=1, base_channels=64).to(device)
+    state_dict = torch.load(checkpoint, map_location=device)
+    model.load_state_dict(state_dict)
+    sde = VPSDE(beta_min=0.01, beta_max=5.0, T=1000)
+    return sde, model
 
 
 def load_rf_model(checkpoint: str, device) -> tuple[RectifiedFlow, UNet]:
-    raise NotImplementedError("Fill in RectifiedFlow and UNet loading.")
+    """Load a trained Rectified Flow model from a checkpoint."""
+    model = UNet(in_channels=1, base_channels=64).to(device)
+    state_dict = torch.load(checkpoint, map_location=device)
+    model.load_state_dict(state_dict)
+    rf = RectifiedFlow()
+    return rf, model
 
 
 def main():
@@ -104,21 +114,71 @@ def main():
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
 
     if args.method == "em":
-        # TODO (5.C.iii)
-        raise NotImplementedError
+        # EM samples (5.C.iii)
+        sde, model = load_vp_model(args.checkpoint, device)
+        model.eval()
+        samples = sde.euler_maruyama(
+            model, shape, num_steps=args.num_steps, device=device
+        )
+        save_grid(samples, args.out, nrow=8, title="VP-EM Sampling")
 
     elif args.method == "pc":
-        # TODO (5.C.iv)
-        raise NotImplementedError
+        # PC samples (5.C.iv)
+        sde, model = load_vp_model(args.checkpoint, device)
+        model.eval()
+        samples = sde.predictor_corrector(
+            model, shape, num_steps=args.num_steps, 
+            n_corrector=args.n_corrector, snr=args.snr, device=device
+        )
+        save_grid(samples, args.out, nrow=8, 
+                 title=f"VP-PC (n_corrector={args.n_corrector})")
 
     elif args.method == "rectflow":
-        # TODO (6.B / 6.C)
-        raise NotImplementedError
+        # Rectified Flow Euler sampler (6.B / 6.C)
+        rf, model = load_rf_model(args.checkpoint, device)
+        model.eval()
+        samples = rf.euler_sample(
+            model, shape, num_steps=args.num_steps, device=device
+        )
+        save_grid(samples, args.out, nrow=8, 
+                 title=f"Rectified Flow ({args.num_steps} steps)")
 
     elif args.method == "all":
-        # TODO (6.D) — generate 8 fixed-seed samples from each method and
-        # arrange them in a 4×8 grid as specified in Problem 6.D.
-        raise NotImplementedError
+        # Side-by-side grid (6.D) — 4×8: 4 methods, 8 fixed seeds
+        torch.manual_seed(args.seed)
+        sde, vp_model = load_vp_model(args.vp_checkpoint, device)
+        rf, rf_model = load_rf_model(args.rf_checkpoint, device)
+        reflow, reflow_model = load_rf_model(args.reflow_checkpoint, device)
+        
+        vp_model.eval()
+        rf_model.eval()
+        reflow_model.eval()
+        
+        # Generate samples for each method
+        samples_vp = sde.euler_maruyama(
+            vp_model, shape, num_steps=1000, device=device
+        )
+        samples_rf = rf.euler_sample(
+            rf_model, shape, num_steps=100, device=device
+        )
+        samples_reflow = reflow.euler_sample(
+            reflow_model, shape, num_steps=1, device=device
+        )
+        
+        # Arrange in 4×8 grid
+        all_samples = torch.cat([
+            samples_vp,
+            samples_rf,
+            samples_reflow,
+        ], dim=0)
+        
+        # If we have exactly 3 models, fill 4th row with duplicates or blanks
+        if all_samples.size(0) < 32:
+            blank = torch.zeros((8, 1, 28, 28), device=device)
+            all_samples = torch.cat([all_samples, blank], dim=0)
+        
+        save_grid(all_samples, args.out, nrow=8, 
+                 title="Method Comparison")
 
 
 if __name__ == "__main__":

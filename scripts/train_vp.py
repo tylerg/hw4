@@ -67,10 +67,30 @@ def score_loss(sde: VPSDE, model: torch.nn.Module, x0: torch.Tensor, device) -> 
     Returns:
         Scalar loss.
     """
-    # TODO (5.A.iii / 5.B setup) — implement the DSM loss.
-    # Hint: sample t ~ Uniform(0,1), call sde.marginal(), call model(x_t, t),
-    #       and compute the weighted MSE as in Song21 Eq. (7).
-    raise NotImplementedError
+    # Sample t ~ Uniform(0, 1)
+    t = torch.rand(x0.size(0), device=device)
+    
+    # Sample from the forward marginal: x_t = c(t) * x0 + σ(t) * ε
+    x_t, eps = sde.marginal(x0, t)
+    
+    # Predict the score
+    score_pred = model(x_t, t)
+    
+    # Weighted MSE loss (Song21 Eq. 7)
+    # Loss = E_t[ σ(t)^2 * || score_pred - (-ε / σ(t)) ||^2 ]
+    # Since score = -ε / σ(t), this simplifies to:
+    # Loss = E_t[ σ(t)^2 * || score_pred + ε / σ(t) ||^2 ]
+    # Which is equivalent to regressing noise: E_t[ || ε - ε_pred ||^2 ]
+    # where ε_pred = -σ(t) * score_pred
+    
+    sigma_t = sde.sigma(t).view(x0.size(0), *([1] * (x0.ndim - 1)))
+    sigma_sq = sigma_t ** 2
+    
+    # Loss: regress the noise
+    loss = F.mse_loss(eps, -sigma_t * score_pred, reduction='none')
+    loss = (sigma_sq * loss).mean()
+    
+    return loss
 
 
 def main():

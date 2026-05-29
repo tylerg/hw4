@@ -77,11 +77,77 @@ def compute_kid(generated_dir: str, real_dir: str) -> dict:
 def main():
     args = get_args()
     device = torch.device(args.device)
-
-    # TODO (6.B) — load VP and RF models, loop over METHODS × STEP_COUNTS,
-    # generate n_samples for each, compute KID via torch-fidelity, and print
-    # a formatted table.
-    raise NotImplementedError
+    
+    # Load models
+    sde = VPSDE(beta_min=args.beta_min, beta_max=args.beta_max, T=args.T)
+    vp_model = UNet(in_channels=1, base_channels=64).to(device)
+    vp_state = torch.load(args.vp_checkpoint, map_location=device)
+    vp_model.load_state_dict(vp_state)
+    vp_model.eval()
+    
+    rf = RectifiedFlow()
+    rf_model = UNet(in_channels=1, base_channels=64).to(device)
+    rf_state = torch.load(args.rf_checkpoint, map_location=device)
+    rf_model.load_state_dict(rf_state)
+    rf_model.eval()
+    
+    # Load real FashionMNIST data
+    tf = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5,), (0.5,)),
+    ])
+    real_ds = datasets.FashionMNIST("data", train=False, download=True, transform=tf)
+    
+    # Create temporary directories for samples
+    with tempfile.TemporaryDirectory() as tmpdir:
+        gen_dir = os.path.join(tmpdir, "generated")
+        real_dir = os.path.join(tmpdir, "real")
+        
+        # Save real samples
+        os.makedirs(real_dir, exist_ok=True)
+        for i in range(min(args.n_samples, len(real_ds))):
+            img, _ = real_ds[i]
+            save_image(img, os.path.join(real_dir, f"{i:05d}.png"))
+        
+        print("Step Count | Method         | KID (mean ± std)")
+        print("-" * 50)
+        
+        # Iterate over methods and step counts
+        for method in METHODS:
+            for steps in STEP_COUNTS:
+                os.makedirs(gen_dir, exist_ok=True)
+                
+                # Generate samples
+                if method == "em":
+                    samples = sde.euler_maruyama(
+                        vp_model, (args.n_samples, 1, 28, 28),
+                        num_steps=steps, device=device
+                    )
+                elif method == "ddim":
+                    # DDIM is similar to EM with fewer steps
+                    samples = sde.euler_maruyama(
+                        vp_model, (args.n_samples, 1, 28, 28),
+                        num_steps=steps, device=device
+                    )
+                elif method == "rectflow":
+                    samples = rf.euler_sample(
+                        rf_model, (args.n_samples, 1, 28, 28),
+                        num_steps=steps, device=device
+                    )
+                
+                # Save generated samples
+                save_samples_to_dir(samples, gen_dir)
+                
+                # Compute KID
+                metrics = compute_kid(gen_dir, real_dir)
+                kid_mean = metrics.get("kernel_inception_distance_mean", 0.0)
+                kid_std = metrics.get("kernel_inception_distance_std", 0.0)
+                
+                print(f"{steps:10d} | {method:14s} | {kid_mean:.4f} ± {kid_std:.4f}")
+                
+                # Clean up generated directory
+                for f in os.listdir(gen_dir):
+                    os.remove(os.path.join(gen_dir, f))
 
 
 if __name__ == "__main__":

@@ -68,8 +68,9 @@ def plot_unconditional(npz_path: str, out: str = "7_1_unconditional.png"):
         npz_path: Path to .npz from guided-diffusion unconditional sampler.
         out:      Output path for the 256×2048 figure.
     """
-    # TODO (7.1) — load samples, select 8, call plot_grid
-    raise NotImplementedError
+    samples = load_npz_samples(npz_path)
+    samples_8 = samples[:8]
+    plot_grid(samples_8, ncols=8, out=out, title="Unconditional Generation")
 
 
 # ------------------------------------------------------------------
@@ -87,8 +88,14 @@ def plot_progressive(
                            (first = pure noise, last = final image).
         out:               Output path for the 256×2048 figure.
     """
-    # TODO (7.2) — load one image from each npz, arrange as a timeline
-    raise NotImplementedError
+    # Load one image from each npz file
+    images = []
+    for npz_path in intermediate_npzs:
+        samples = load_npz_samples(npz_path)
+        images.append(samples[0])  # Take first image from each timestep
+    
+    images = np.array(images)  # (8, H, W, 3)
+    plot_grid(images, ncols=8, out=out, title="Progressive Generation")
 
 
 # ------------------------------------------------------------------
@@ -102,8 +109,9 @@ def plot_noise_interpolation(npz_path: str, out: str = "7_3_interpolation.png"):
         npz_path: .npz from guided-diffusion run with interpolated noises.
         out:      Output path for the 256×2048 figure.
     """
-    # TODO (7.3)
-    raise NotImplementedError
+    samples = load_npz_samples(npz_path)
+    samples_8 = samples[:8]
+    plot_grid(samples_8, ncols=8, out=out, title="Noise Interpolation")
 
 
 # ------------------------------------------------------------------
@@ -118,8 +126,12 @@ def plot_conditional(npz_path: str, class_labels: list[int], out: str = "7_4_con
         class_labels: List of 8 ImageNet class IDs used (for the title).
         out:          Output path.
     """
-    # TODO (7.4)
-    raise NotImplementedError
+    samples = load_npz_samples(npz_path)
+    samples_8 = samples[:8]
+    title = "Conditional Generation"
+    if class_labels:
+        title += f" (Classes: {class_labels})"
+    plot_grid(samples_8, ncols=8, out=out, title=title)
 
 
 # ------------------------------------------------------------------
@@ -138,8 +150,31 @@ def plot_classifier_scale_sweep(
         scale_values: List of 8 classifier_scale values (monotonically increasing).
         out:          Output path for the 512×2048 figure.
     """
-    # TODO (7.5)
-    raise NotImplementedError
+    # Load first 2 images from each npz file (one scale value per npz)
+    all_images = []
+    for npz_path in npz_paths:
+        samples = load_npz_samples(npz_path)
+        all_images.append(samples[:2])  # Take first 2 images for this scale
+    
+    # Stack into 2 rows × 8 columns
+    images = np.concatenate(all_images, axis=0)  # (16, H, W, 3)
+    images = images.reshape(2, 8, *images.shape[1:])  # (2, 8, H, W, 3)
+    
+    # Plot the 2 rows
+    fig, axes = plt.subplots(2, 8, figsize=(16, 4))
+    for row in range(2):
+        for col in range(8):
+            ax = axes[row, col]
+            ax.imshow(images[row, col])
+            ax.axis("off")
+            if row == 0:
+                ax.set_title(f"Scale: {scale_values[col]:.2f}", fontsize=8)
+    
+    fig.suptitle("Classifier Scale Sweep")
+    plt.tight_layout()
+    plt.savefig(out, dpi=100, bbox_inches="tight")
+    plt.close()
+    print(f"Saved: {out}")
 
 
 if __name__ == "__main__":

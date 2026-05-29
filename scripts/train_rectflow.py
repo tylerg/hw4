@@ -21,6 +21,7 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 from torchvision import datasets, transforms
+from tqdm import tqdm
 
 from diffusion.unet import UNet
 from diffusion.rectflow import RectifiedFlow
@@ -101,7 +102,7 @@ def main():
 
         train_losses = []
         best_loss = math.inf
-        for epoch in range(1, args.epochs + 1):
+        for epoch in tqdm(range(1, args.epochs + 1)):
             # Reflow training uses pre-paired data; loss just does MSE on vel
             model.train()
             running = 0.0
@@ -134,7 +135,7 @@ def main():
 
         train_losses = []
         best_loss = math.inf
-        for epoch in range(1, args.epochs + 1):
+        for epoch in tqdm(range(1, args.epochs + 1)):
             loss = train_one_epoch(model, flow, dataloader, optimizer, device)
             train_losses.append(loss)
             print(f"Epoch {epoch:3d}/{args.epochs} | loss {loss:.4f}")

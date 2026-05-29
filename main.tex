@@ -1,0 +1,333 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{array}
+
+\title{EE/CS 148B HW4: Diffusion Models}
+\author{Your Name Here}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section*{Collaboration Statement}
+I worked on this assignment independently and used course materials, the assigned papers, and the provided starter code.
+
+\section{Part 1: DDPM and Score Matching}
+
+\subsection*{Problem 1.2: Variational Bound}
+We minimize the variational bound on negative log likelihood because the exact log likelihood $\log p_\theta(x_0)$ is difficult to compute directly for diffusion models. Introducing latent variables $x_{1:T}$ gives an intractable marginal likelihood, but Jensen's inequality yields a tractable upper bound on $-\log p_\theta(x_0)$. Optimizing that bound maximizes a lower bound on $\log p_\theta(x_0)$, which is the standard maximum-likelihood objective in latent-variable models.
+
+For the chain of inequalities in Eq.\ (3), write
+\[
+\log p_\theta(x_0)
+= \log \int p_\theta(x_{0:T})\,dx_{1:T}
+= \log \int q(x_{1:T}\mid x_0)\frac{p_\theta(x_{0:T})}{q(x_{1:T}\mid x_0)}\,dx_{1:T}.
+\]
+Applying Jensen's inequality to the concave $\log$ gives
+\[
+\log p_\theta(x_0)
+\ge \mathbb{E}_{q(x_{1:T}\mid x_0)}\!\left[\log p_\theta(x_{0:T})-\log q(x_{1:T}\mid x_0)\right].
+\]
+Rearranging yields an upper bound on $-\log p_\theta(x_0)$. The gap is a KL divergence and is therefore nonnegative.
+
+\subsection*{Problem 1.3: Tractable Loss Function}
+Equation (18) follows by expanding the ELBO into a sum of KL terms across time steps, using the Markov factorization of the forward and reverse processes, and separating the final prior term. Equation (20) uses the fact that the forward posterior $q(x_{t-1}\mid x_t,x_0)$ is Gaussian, so the KL between two Gaussians reduces to a quadratic form plus constants. Equation (21) uses the closed form for the Gaussian KL and the assumption that the reverse covariance is fixed. Equation (22) follows by dropping all terms independent of $\theta$ and collecting the remaining mean-matching term into a weighted squared error.
+
+\subsection*{Problem 1.4: Markov Process --- Equation (4)}
+Equation (4) is the standard forward Markov factorization:
+\[
+q(x_{1:T}\mid x_0)=\prod_{t=1}^T q(x_t\mid x_{t-1}).
+\]
+It holds because the diffusion forward process is defined as a first-order Markov chain, so each $x_t$ depends only on $x_{t-1}$ and not on earlier states once $x_{t-1}$ is known.
+
+\subsection*{Problem 1.5: Markov Process --- Equations (6) and (7)}
+Starting from the Gaussian transition
+\[
+q(x_t\mid x_{t-1})=\mathcal{N}(x_t;\sqrt{\alpha_t}x_{t-1},\beta_t I),
+\]
+one can unroll the recursion to obtain
+\[
+x_t=\sqrt{\bar\alpha_t}\,x_0+\sqrt{1-\bar\alpha_t}\,\epsilon,\qquad \epsilon\sim\mathcal{N}(0,I),
+\]
+which is Eq.\ (6). Equation (7) follows because the accumulated variance is the sum of the injected variances scaled through the recursion, giving
+\[
+\bar\alpha_t=\prod_{s=1}^t \alpha_s,\qquad \beta_t=1-\alpha_t.
+\]
+This is also obtainable directly from the Gaussian conditioning formula applied to the joint distribution of $(x_{t-1},x_t)\mid x_0$.
+
+\subsection*{Problem 1.6: KL Divergence and Equation (8)}
+With $\Sigma_\theta(x_t,t)=\beta_t I$, the KL between $q(x_{t-1}\mid x_t,x_0)=\mathcal{N}(\tilde\mu_t,\tilde\beta_t I)$ and $p_\theta(x_{t-1}\mid x_t)=\mathcal{N}(\mu_\theta,\beta_t I)$ reduces to
+\[
+D_{\mathrm{KL}}(q\|p_\theta)
+= C + \frac{1}{2\beta_t}\mathbb{E}\left[\|\tilde\mu_t(x_t,x_0)-\mu_\theta(x_t,t)\|^2\right],
+\]
+where $C$ does not depend on $\theta$. This is exactly Eq.\ (8).
+
+\subsection*{Problem 1.7: Parameterization and Equation (12)}
+Substituting the noise-prediction parameterization into the mean-matching objective and using the identity
+\[
+\tilde\mu_t(x_t,x_0)=\frac{1}{\sqrt{\alpha_t}}\left(x_t-\frac{\beta_t}{\sqrt{1-\bar\alpha_t}}\epsilon\right)
+\]
+gives a weighted squared error in $\epsilon-\epsilon_\theta(x_t,t)$. After algebra,
+\[
+L_{t-1}-C
+= \mathbb{E}_{x_0,\epsilon}\left[
+\frac{\beta_t^2}{2\sigma_t^2 \alpha_t(1-\bar\alpha_t)}
+\left\|\epsilon-\epsilon_\theta\!\left(\sqrt{\bar\alpha_t}x_0+\sqrt{1-\bar\alpha_t}\,\epsilon,t\right)\right\|^2
+\right],
+\]
+which matches Eq.\ (12).
+
+\subsection*{Problem 1.8: Coefficient Plot}
+The coefficient
+\[
+\frac{\beta_t^2}{2\sigma_t^2\alpha_t(1-\bar\alpha_t)}
+\]
+is largest for small $t$ and smaller for large $t$, so the simplified objective effectively downweights later timesteps. A log-scale plot of this coefficient versus $t$ is the expected deliverable.
+
+\section{Part 2: Score Matching and Langevin Dynamics}
+
+\subsection*{Problem 2.2: Explicit Score Matching}
+ESM is often impractical because it requires access to the data score $\nabla_x \log p(x)$, which is unknown for real data and intractable for most likelihood-free generative models. The objective is therefore not directly computable from samples alone.
+
+\subsection*{Problem 2.3: Implicit Score Matching}
+Expanding
+\[
+\|s_\theta(x)-\nabla_x\log p(x)\|^2
+\]
+gives a cross term $-2s_\theta(x)^\top \nabla_x\log p(x)$. Taking expectation and integrating by parts,
+\[
+\mathbb{E}_p[s_\theta^\top \nabla \log p]
+= \int s_\theta^\top \nabla p\,dx
+= -\int p\,\mathrm{tr}(\nabla_x s_\theta)\,dx,
+\]
+where the boundary term vanishes because $p(x)$ vanishes at infinity. Thus ESM and ISM differ by a $\theta$-independent constant:
+\[
+J_{\mathrm{ISM}}(\theta)=\mathbb{E}_p\!\left[\mathrm{tr}(\nabla_x s_\theta(x))+\frac{1}{2}\|s_\theta(x)\|^2\right].
+\]
+
+\subsection*{Problem 2.4: Limitation of ISM}
+Although tractable, ISM still requires computing the Jacobian trace of the score network with respect to input $x$, which is expensive in high dimensions and often unstable to optimize. It also scores only the clean data distribution, so it does not directly handle the denoising structure that makes diffusion models effective.
+
+\subsection*{Problem 2.5: Tweedie's Formula}
+Let $\tilde x=x+\sigma \epsilon$ with $\epsilon\sim\mathcal N(0,I)$. The conditional density is
+\[
+p(x\mid \tilde x)=\frac{p(\tilde x\mid x)p(x)}{p_\sigma(\tilde x)}.
+\]
+Then
+\[
+\nabla_{\tilde x}p_\sigma(\tilde x)=\int \nabla_{\tilde x}p(\tilde x\mid x)p(x)\,dx
+= \frac{1}{\sigma^2}\int (x-\tilde x)p(\tilde x\mid x)p(x)\,dx.
+\]
+Dividing by $p_\sigma(\tilde x)$ yields
+\[
+\nabla_{\tilde x}\log p_\sigma(\tilde x)=\frac{1}{\sigma^2}\left(\mathbb E[x\mid \tilde x]-\tilde x\right),
+\]
+hence
+\[
+\mathbb E[x\mid \tilde x]=\tilde x+\sigma^2\nabla_{\tilde x}\log p_\sigma(\tilde x).
+\]
+
+\subsection*{Problem 2.6: DSM Objective}
+From Tweedie's formula,
+\[
+\nabla_{\tilde x}\log p_\sigma(\tilde x)=\frac{\mathbb E[x\mid \tilde x]-\tilde x}{\sigma^2}.
+\]
+So minimizing
+\[
+\mathbb E\left[\|s_\theta(\tilde x)-\nabla_{\tilde x}\log p_\sigma(\tilde x)\|^2\right]
+\]
+is equivalent, up to a $\theta$-independent constant, to minimizing
+\[
+\mathbb E\left[\|s_\theta(\tilde x)-\nabla_{\tilde x}\log p(\tilde x\mid x)\|^2\right],
+\]
+which is the DSM objective.
+
+\subsection*{Problem 2.7: DSM vs. DDPM}
+For Gaussian corruption, $\tilde x = \sqrt{\bar\alpha_t}x_0 + \sqrt{1-\bar\alpha_t}\epsilon$ and $\sigma=\sqrt{1-\bar\alpha_t}$. The DDPM model predicts $\epsilon$, while the score satisfies
+\[
+\nabla_{\tilde x}\log p(\tilde x\mid x_0) = -\frac{\epsilon}{\sigma}.
+\]
+Therefore the optimizers differ by the constant factor
+\[
+s_\theta^*(\tilde x,t)=c(\sigma)\,\epsilon_\theta^*(\tilde x,t),\qquad c(\sigma)=-\frac{1}{\sigma}.
+\]
+
+\subsection*{Problem 2.8: Langevin Dynamics Sampling}
+An approximate sampler is:
+\begin{enumerate}[leftmargin=1.25em]
+    \item Train a score model for a small noise level $\sigma$ using DSM.
+    \item Initialize $x^{(0)}\sim \mathcal N(0,I)$.
+    \item Run Langevin updates
+    \[
+    x^{(k+1)}=x^{(k)}+\eta\,s_\theta(x^{(k)})+\sqrt{2\eta}\,z^{(k)},\qquad z^{(k)}\sim\mathcal N(0,I).
+    \]
+    \item For small $\sigma$, the resulting samples approximate $p(x)$.
+\end{enumerate}
+
+\section{Part 3: SDE Perspective}
+
+\subsection*{Problem 3.2: VP-SDE Approximations}
+The two approximations arise from a first-order Euler discretization. When $\Delta t\ll 1$, we have
+\[
+\sqrt{1-\beta(t)\Delta t}\approx 1-\frac{1}{2}\beta(t)\Delta t,
+\qquad
+\sqrt{\beta(t)\Delta t}\approx \sqrt{\beta(t)}\,\sqrt{\Delta t}.
+\]
+These convert the discrete DDPM forward transition into the continuous VP-SDE.
+
+\subsection*{Problem 3.3: Reverse VP-SDE}
+Using the general reverse-SDE formula, the reverse process is
+\[
+dx = \left[-\frac{1}{2}\beta(t)x - \beta(t)\nabla_x\log p_t(x)\right]dt + \sqrt{\beta(t)}\,d\bar B_t.
+\]
+
+\subsection*{Problem 3.4: Reverse VP-SDE Discretization}
+Discretizing the reverse SDE with step size $\Delta t$ gives
+\[
+x_i = x_{i+1} + \left[\frac{1}{2}\beta_{i+1}x_{i+1} + \beta_{i+1}s_\theta(x_{i+1},i+1)\right]\Delta t + \sqrt{\beta_{i+1}\Delta t}\,z_{i+1}.
+\]
+Rearranging and letting $\beta_{i+1}\to 0$ yields
+\[
+x_i=\frac{1}{\sqrt{1-\beta_{i+1}}}\left(x_{i+1}+\beta_{i+1}s_\theta(x_{i+1},i+1)\right)+\sqrt{\beta_{i+1}}\,z_{i+1},
+\]
+matching the DDPM update.
+
+\subsection*{Problem 3.5: Connecting SDE and DDPM}
+In DDPM, the score model predicts noise $\epsilon_\theta$ rather than the score itself. Since $s_\theta = -\epsilon_\theta/\sigma_t$, the coefficient in front of the score term differs by the noise standard deviation. With $\sigma_t=\sqrt{\beta_t}$, the update rules agree after the change of variables.
+
+\subsection*{Problem 3.6: Reverse SDE vs. Langevin Dynamics}
+The reverse SDE uses time-dependent information from the entire forward diffusion process, so it models how the distribution changes across noise levels rather than only a single stationary density. This is reflected in the score matching objective of Song et al.\ through conditioning on time $t$, and in DDPM through the explicit timestep-conditioned prediction $\epsilon_\theta(x_t,t)$ rather than a single unconditional score.
+
+\subsection*{Problem 3.7: Conditional Diffusion and Classifier Guidance}
+By Bayes' rule,
+\[
+\nabla_x \log p_t(x\mid y)=\nabla_x \log p_t(x)+\nabla_x \log p(y\mid x).
+\]
+Classifier guidance adds the classifier gradient $\nabla_x\log p(y\mid x)$ to the unconditional score, steering samples toward the desired class while preserving the learned data manifold.
+
+\section{Part 4: Rectified Flow Theory}
+
+\subsection*{Problem 4.1: Optimal Velocity Field}
+For fixed $(x,t)$, the loss is an MSE in $v_\theta(x,t)$. The pointwise minimizer of a conditional MSE is the conditional expectation:
+\[
+v^*(x,t)=\mathbb E[X_1-X_0\mid X_t=x].
+\]
+
+\subsection*{Problem 4.2: Connection to Score Matching}
+From $X_t=(1-t)X_0+tX_1$ with $X_0\sim\mathcal N(0,I)$, one obtains
+\[
+v^*(x,t)=\frac{x-\mathbb E[X_0\mid X_t=x]}{t}.
+\]
+Using Tweedie's formula, $\mathbb E[X_0\mid X_t=x]$ is related to the score of the marginal $p_t(x)$, so rectified flow and score-based diffusion differ mainly by whether the network regresses velocity or score. Both are learning the same transport geometry under different parameterizations.
+
+\subsection*{Problem 4.3: Straightness and Reflow}
+(1) $S=1$ means the trajectory is perfectly straight and the integrated velocity exactly matches the endpoint displacement. $S=0$ means the path is maximally curved relative to the endpoint displacement.
+
+(2) Re-pairing recomputes endpoints under the learned flow, so the new training pairs are closer to the model's own trajectories. This makes the conditional transport easier and reduces curvature because the model is trained on trajectories it already approximately follows.
+
+(3) One round of reflow costs approximately one full sampling pass to generate the new pairs plus one retraining pass, so it is more expensive than standard training. In practice the number of rounds is limited because each round adds compute with diminishing returns.
+
+\subsection*{Problem 4.4: Rectified Flow vs. DDPM}
+(1) DDPM regresses noise $\epsilon$ under a noisy Gaussian corruption model, while rectified flow regresses the velocity $X_1-X_0$ along a linear interpolation between noise and data.
+
+(2) Rectified flow can use fewer steps because the learned ODE is close to straight and deterministic. It can use exactly one step after reflow when the learned trajectory is sufficiently straight.
+
+(3) DDPM follows a curved stochastic reverse-SDE path, whereas rectified flow follows an ODE path that is intended to be nearly linear. The practical effect is much smaller discretization error for the flow model.
+
+(4) Rectified flow does not directly provide the same variational likelihood bound as DDPM. It is primarily a transport-based generative model, so likelihood evaluation is not native to the method.
+
+\section{Part 5: VP-SDE Implementation}
+\subsection*{Problem 5.A.i--iii}
+For the VP SDE,
+\[
+f(x,t)=-\tfrac12\beta(t)x,\qquad g(t)=\sqrt{\beta(t)},
+\]
+with linear schedule
+\[
+\beta(t)=\beta_{\min}+(\beta_{\max}-\beta_{\min})t,
+\]
+and
+\[
+c(t)=\exp\!\left(-\tfrac12\int_0^t \beta(s)\,ds\right).
+\]
+The forward marginal is
+\[
+x_t=c(t)x_0+\sigma(t)\epsilon,\qquad \sigma(t)=\sqrt{1-c(t)^2},\ \epsilon\sim\mathcal N(0,I).
+\]
+
+\subsection*{Problem 5.C.i: Dataset Visualization}
+FashionMNIST contains 10 classes: T-shirt/top, trouser, pullover, dress, coat, sandal, shirt, sneaker, bag, and ankle boot. Each image has dimension $28\times 28$ grayscale. A 64-image grid is the expected visualization deliverable.
+
+\subsection*{Problem 5.C.ii: Training Curves}
+The loss should decrease over epochs on a log scale, with early stopping selected when validation or training loss stops improving. Reasonable hyperparameters are $\beta_{\min}=0.01$ and $\beta_{\max}\in\{5,10\}$, with Adam at learning rate $10^{-4}$.
+
+\subsection*{Problem 5.C.iii--v: Samples and Discussion}
+EM samples are typically noisy but recognizable when training has converged. PC sampling usually improves sharpness and class structure, and more corrector steps tend to improve sample quality up to a point before diminishing returns. The model captures coarse silhouettes, footwear, and bag-like shapes well, while it tends to struggle with fine texture and class confusions such as shirt versus coat.
+
+\subsection*{Problem 5.D: Inverse Problems}
+For inpainting, the reverse diffusion process should repeatedly reimpose the observed pixels while denoising the missing regions. The conditioning is done by replacing the known pixels with their forward-diffused values at each reverse step, which preserves the measurements and lets the score model fill in plausible content elsewhere.
+
+\section{Part 6: Rectified Flow Implementation}
+\subsection*{Problem 6.A: Forward Process and Training Loss}
+The forward process is
+\[
+X_t=(1-t)X_0+tX_1,\qquad X_0\sim \mathcal N(0,I),
+\]
+with regression target
+\[
+V=X_1-X_0.
+\]
+The loss is the MSE
+\[
+L_{\mathrm{RF}}(\theta)=\mathbb E\|V-v_\theta(X_t,t)\|^2.
+\]
+The rectified-flow and DDPM losses are not directly on the same scale because one regresses velocity and the other regresses noise under different parameterizations.
+
+\subsection*{Problem 6.B: Euler Sampler and Comparison}
+The ODE sampler uses forward Euler:
+\[
+X_{t+\Delta t}=X_t+v_\theta(X_t,t)\Delta t.
+\]
+Flow matching often becomes recognizable in far fewer steps than DDPM because the learned trajectories are intended to be straighter. A 100-step flow model typically approaches the quality of a much slower DDPM sampler if the learned vector field is accurate.
+
+\subsection*{Problem 6.C: Reflow}
+Reflow generates paired data by sampling from the first-round ODE and then retraining on those pairs. One-step generation after reflow is expected to improve sharply over one-step rectified flow without reflow, and can approach multi-step sampling quality when the learned paths are sufficiently straight.
+
+\subsection*{Problem 6.D: Unified Qualitative Comparison}
+Using the same initial noise across methods should yield semantically related outputs when the sample path preserves the broad mode. DDPM often appears more stochastic and can show more local artifact variation, while rectified flow tends to produce cleaner, more coherent samples once the trajectory has been straightened.
+
+\section{Part 7: Guided Diffusion}
+\subsection*{Problem 7.1: Unconditional Image Generation}
+The expected output is a 256$\times$2048 strip of 8 unconditional samples from the 256$\times$256 guided-diffusion model. The command should include the model path, the sampling flags, and the output directory. The samples should show diverse ImageNet-like content with varying global composition.
+
+\subsection*{Problem 7.2: Progressive Generation}
+The progressive grid should start with Gaussian noise and end with the final sample, with intermediate columns showing increasing semantic structure. Early steps should look like static, while later steps should reveal object boundaries and texture.
+
+\subsection*{Problem 7.3: Noise Interpolation}
+Interpolating between two noise seeds should smoothly morph one generated image into another. The resulting 8-column strip should show gradual semantic change rather than abrupt jumps.
+
+\subsection*{Problem 7.4: Conditional Image Generation}
+Classifier-guided sampling should produce images aligned with the chosen classes. The outputs should be more class-specific than unconditional samples, especially for visually distinctive categories.
+
+\subsection*{Problem 7.5: Classifier Scale Sweep}
+As classifier scale increases, class adherence usually strengthens, but diversity can decrease and artifacts can increase. A moderate scale typically offers the best tradeoff between fidelity and realism.
+
+\section*{Appendix: Placeholders for Figures and Tables}
+The following figures should be inserted from the completed experiments:
+\begin{itemize}[leftmargin=1.25em]
+    \item Coefficient plot for Problem 1.8.
+    \item FashionMNIST dataset grid for Problem 5.C.i.
+    \item Training curves for Problems 5.C.ii and 6.A.
+    \item EM and PC sample grids for Problems 5.C.iii--iv.
+    \item Inpainting result grid for Problem 5.D.
+    \item Rectified flow and DDPM comparison grids and KID/FID tables for Problems 6.B--6.D.
+    \item Guided diffusion figures for Problems 7.1--7.5.
+\end{itemize}
+
+\end{document}

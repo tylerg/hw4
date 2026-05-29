@@ -48,9 +48,11 @@ class RectifiedFlow:
             (x_t, x0, vel): interpolated point, noise used, and regression
                             target velocity (x1 - x0), all shape (B, *).
         """
-        # TODO (6.A) — sample x0 ~ N(0,I), form x_t, compute vel
-        # Hint: broadcast t to match x1's spatial dimensions before multiplying.
-        raise NotImplementedError
+        x0 = torch.randn_like(x1)
+        t_view = t.view(-1, *([1] * (x1.ndim - 1)))
+        xt = (1 - t_view) * x0 + t_view * x1
+        vel = x1 - x0
+        return xt, x0, vel
 
     def loss(self, v_theta: nn.Module, x1: Tensor) -> Tensor:
         """Rectified Flow training loss (RF objective).
@@ -65,8 +67,10 @@ class RectifiedFlow:
         Returns:
             Scalar loss.
         """
-        # TODO (6.A)
-        raise NotImplementedError
+        t = torch.rand(x1.size(0), device=x1.device)
+        xt, _, vel = self.forward_process(x1, t)
+        import torch.nn.functional as F
+        return F.mse_loss(v_theta(xt, t), vel)
 
     # ------------------------------------------------------------------
     # 6.B  Euler ODE sampler
@@ -96,8 +100,13 @@ class RectifiedFlow:
         Returns:
             Generated samples X_1, shape (B, C, H, W).
         """
-        # TODO (6.B)
-        raise NotImplementedError
+        B = shape[0]
+        x = torch.randn(shape, device=device)
+        dt = 1.0 / num_steps
+        for step in range(num_steps):
+            t = torch.full((B,), step / num_steps, device=device)
+            x = x + v_theta(x, t) * dt
+        return x
 
     # ------------------------------------------------------------------
     # 6.C  Reflow  (data generation only — retraining uses loss() above)
@@ -130,5 +139,14 @@ class RectifiedFlow:
         Returns:
             (x0_all, x1_all): tensors of shape (n_pairs, C, H, W) on CPU.
         """
-        # TODO (6.C)
-        raise NotImplementedError
+        x0_chunks = []
+        x1_chunks = []
+        remaining = n_pairs
+        while remaining > 0:
+            bs = min(batch_size, remaining)
+            x0 = torch.randn((bs, *image_shape), device=device)
+            x1 = self.euler_sample(v_theta, (bs, *image_shape), num_steps=num_steps, device=device)
+            x0_chunks.append(x0.cpu())
+            x1_chunks.append(x1.cpu())
+            remaining -= bs
+        return torch.cat(x0_chunks, dim=0), torch.cat(x1_chunks, dim=0)
